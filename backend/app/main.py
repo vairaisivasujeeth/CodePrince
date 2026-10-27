@@ -12,53 +12,27 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pwdlib import PasswordHash
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, func, select
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session, sessionmaker
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, select
+from sqlalchemy.orm import Session
+from sqlalchemy import inspect
+from dotenv import load_dotenv
 
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///./dsa_forge.db")
-engine = create_engine(DB_URL, connect_args={"check_same_thread": False} if DB_URL.startswith("sqlite") else {})
-SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+load_dotenv()
+
+from .models import (
+    Assessment, AssessmentAttempt, AssessmentQuestion, Base, Course, CourseQuestion,
+    Enrollment, LoginSession, Progress, Question, Sheet, SheetQuestion, Submission,
+    TestCase, Topic, User,
+)
+from .database import SessionLocal, engine
+from .schemas import (
+    AccountIn, AssessmentIn, CourseIn, Credentials, ExecuteIn, ProgressIn,
+    QuestionIn, SheetIn, TestIn,
+)
+
 password_hash = PasswordHash.recommended()
 
-class Base(DeclarativeBase): pass
-class User(Base):
-    __tablename__="users"; id: Mapped[int]=mapped_column(primary_key=True); email: Mapped[str]=mapped_column(String(255),unique=True,index=True); password_hash: Mapped[str]=mapped_column(String(255)); role: Mapped[str]=mapped_column(String(20),default="student",index=True); registration_number: Mapped[str|None]=mapped_column(String(64),unique=True,nullable=True,index=True); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
-class LoginSession(Base):
-    __tablename__="sessions"; id: Mapped[int]=mapped_column(primary_key=True); token_hash: Mapped[str]=mapped_column(String(64),unique=True,index=True); user_id: Mapped[int]=mapped_column(ForeignKey("users.id",ondelete="CASCADE")); expires_at: Mapped[datetime]=mapped_column(DateTime)
-class Topic(Base):
-    __tablename__="topics"; id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(100),unique=True); position: Mapped[int]=mapped_column(default=0)
-class Question(Base):
-    __tablename__="questions"; id: Mapped[int]=mapped_column(primary_key=True); owner_id: Mapped[int|None]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),nullable=True,index=True); title: Mapped[str]=mapped_column(String(200)); slug: Mapped[str]=mapped_column(String(220),unique=True,index=True); statement: Mapped[str]=mapped_column(Text); difficulty: Mapped[str]=mapped_column(String(12),default="Easy"); topic: Mapped[str]=mapped_column(String(100),default="Arrays"); tags: Mapped[str]=mapped_column(Text,default="[]"); constraints: Mapped[str]=mapped_column(Text,default=""); input_format: Mapped[str]=mapped_column(Text,default=""); output_format: Mapped[str]=mapped_column(Text,default=""); hints: Mapped[str]=mapped_column(Text,default=""); editorial: Mapped[str]=mapped_column(Text,default=""); starter_code: Mapped[str]=mapped_column(Text,default="{}"); published: Mapped[bool]=mapped_column(Boolean,default=False); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
-class TestCase(Base):
-    __tablename__="test_cases"; id: Mapped[int]=mapped_column(primary_key=True); question_id: Mapped[int]=mapped_column(ForeignKey("questions.id",ondelete="CASCADE"),index=True); input: Mapped[str]=mapped_column(Text); expected_output: Mapped[str]=mapped_column(Text); is_hidden: Mapped[bool]=mapped_column(Boolean,default=False)
-class Sheet(Base):
-    __tablename__="sheets"; id: Mapped[int]=mapped_column(primary_key=True); owner_id: Mapped[int]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True); title: Mapped[str]=mapped_column(String(160)); description: Mapped[str]=mapped_column(Text,default=""); share_token: Mapped[str]=mapped_column(String(48),unique=True); is_public: Mapped[bool]=mapped_column(Boolean,default=False); target_date: Mapped[str]=mapped_column(String(20),default=""); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
-class SheetQuestion(Base):
-    __tablename__="sheet_questions"; sheet_id: Mapped[int]=mapped_column(ForeignKey("sheets.id",ondelete="CASCADE"),primary_key=True); question_id: Mapped[int]=mapped_column(ForeignKey("questions.id",ondelete="CASCADE"),primary_key=True); position: Mapped[int]=mapped_column(default=0)
-class Submission(Base):
-    __tablename__="submissions"; id: Mapped[int]=mapped_column(primary_key=True); user_id: Mapped[int]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True); question_id: Mapped[int]=mapped_column(ForeignKey("questions.id",ondelete="CASCADE")); language: Mapped[str]=mapped_column(String(20)); source: Mapped[str]=mapped_column(Text); verdict: Mapped[str]=mapped_column(String(32)); runtime_ms: Mapped[int]=mapped_column(default=0); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
-class Course(Base):
-    __tablename__="courses"; id: Mapped[int]=mapped_column(primary_key=True); title: Mapped[str]=mapped_column(String(160),unique=True); code: Mapped[str]=mapped_column(String(40),unique=True,index=True); description: Mapped[str]=mapped_column(Text,default=""); faculty_id: Mapped[int|None]=mapped_column(ForeignKey("users.id",ondelete="SET NULL"),nullable=True); active: Mapped[bool]=mapped_column(Boolean,default=True); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
-class CourseQuestion(Base):
-    __tablename__="course_questions"; course_id: Mapped[int]=mapped_column(ForeignKey("courses.id",ondelete="CASCADE"),primary_key=True); question_id: Mapped[int]=mapped_column(ForeignKey("questions.id",ondelete="CASCADE"),primary_key=True); position: Mapped[int]=mapped_column(default=0)
-class Enrollment(Base):
-    __tablename__="enrollments"; __table_args__=(UniqueConstraint("course_id","student_id"),); id: Mapped[int]=mapped_column(primary_key=True); course_id: Mapped[int]=mapped_column(ForeignKey("courses.id",ondelete="CASCADE"),index=True); student_id: Mapped[int]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True); faculty_id: Mapped[int|None]=mapped_column(ForeignKey("users.id",ondelete="SET NULL"),nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
-class Assessment(Base):
-    __tablename__="assessments"; id: Mapped[int]=mapped_column(primary_key=True); course_id: Mapped[int]=mapped_column(ForeignKey("courses.id",ondelete="CASCADE"),index=True); faculty_id: Mapped[int]=mapped_column(ForeignKey("users.id",ondelete="CASCADE")); title: Mapped[str]=mapped_column(String(160)); description: Mapped[str]=mapped_column(Text,default=""); starts_at: Mapped[datetime|None]=mapped_column(DateTime,nullable=True); ends_at: Mapped[datetime|None]=mapped_column(DateTime,nullable=True); published: Mapped[bool]=mapped_column(Boolean,default=False); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
-class AssessmentQuestion(Base):
-    __tablename__="assessment_questions"; assessment_id: Mapped[int]=mapped_column(ForeignKey("assessments.id",ondelete="CASCADE"),primary_key=True); question_id: Mapped[int]=mapped_column(ForeignKey("questions.id",ondelete="CASCADE"),primary_key=True); points: Mapped[int]=mapped_column(default=10)
-class AssessmentAttempt(Base):
-    __tablename__="assessment_attempts"; __table_args__=(UniqueConstraint("assessment_id","student_id"),); id: Mapped[int]=mapped_column(primary_key=True); assessment_id: Mapped[int]=mapped_column(ForeignKey("assessments.id",ondelete="CASCADE"),index=True); student_id: Mapped[int]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True); score: Mapped[int]=mapped_column(default=0); submitted_at: Mapped[datetime|None]=mapped_column(DateTime,nullable=True); shared: Mapped[bool]=mapped_column(Boolean,default=False)
-class Progress(Base):
-    __tablename__="progress"; __table_args__=(UniqueConstraint("user_id","question_id"),); id: Mapped[int]=mapped_column(primary_key=True); user_id: Mapped[int]=mapped_column(ForeignKey("users.id",ondelete="CASCADE")); question_id: Mapped[int]=mapped_column(ForeignKey("questions.id",ondelete="CASCADE")); attempts: Mapped[int]=mapped_column(default=0); solved: Mapped[bool]=mapped_column(Boolean,default=False); bookmarked: Mapped[bool]=mapped_column(Boolean,default=False); notes: Mapped[str]=mapped_column(Text,default=""); confidence: Mapped[int]=mapped_column(default=0); revision_due: Mapped[datetime|None]=mapped_column(DateTime,nullable=True); last_attempted: Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
 
-class Credentials(BaseModel): email: str = Field(min_length=3,max_length=255); password: str = Field(min_length=8,max_length=128); registration_number: str|None = Field(default=None,max_length=64)
-class TestIn(BaseModel): input: str = Field(max_length=10000); expected_output: str = Field(max_length=10000); is_hidden: bool=False
-class QuestionIn(BaseModel):
-    title: str=Field(min_length=3,max_length=200); statement: str=Field(min_length=3); difficulty: Literal["Easy","Medium","Hard"]="Easy"; topic: str="Arrays"; tags: list[str]=[]; constraints: str=""; input_format: str=""; output_format: str=""; hints: str=""; editorial: str=""; starter_code: dict[str,str]={}; published: bool=False; tests: list[TestIn]=[]
-class SheetIn(BaseModel): title: str=Field(min_length=2,max_length=160); description: str=""; is_public: bool=False; target_date: str=""
-class ExecuteIn(BaseModel): question_id:int; language: Literal["c","cpp","java","python","go"]; source:str=Field(min_length=1,max_length=100000); input: str|None=None
-class ProgressIn(BaseModel): bookmarked: bool|None=None; notes: str|None=Field(default=None,max_length=10000); confidence: int|None=Field(default=None,ge=0,le=5); revision_due: datetime|None=None
 
 app=FastAPI(title="DSA Forge API",version="0.1.0")
 origins=os.getenv("CORS_ORIGINS","http://localhost:5173").split(",")
@@ -87,7 +61,7 @@ def progress_for(s,u,qid):
 def seed():
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
-      columns=[row[1] for row in conn.exec_driver_sql("PRAGMA table_info(users)")]
+      columns = {column["name"] for column in inspect(conn).get_columns("users")}
       if "role" not in columns: conn.exec_driver_sql("ALTER TABLE users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'student'")
       if "registration_number" not in columns: conn.exec_driver_sql("ALTER TABLE users ADD COLUMN registration_number VARCHAR(64)")
     with SessionLocal() as s:
@@ -332,9 +306,7 @@ def import_data(payload:dict,u:User=Depends(current),s:Session=Depends(db)):
 def require_role(user: User, *roles: str):
     if user.role not in roles: raise HTTPException(403, "This action is not permitted for your account role")
 def course_view(course: Course): return {"id":course.id,"title":course.title,"code":course.code,"description":course.description,"faculty_id":course.faculty_id,"active":course.active}
-class AccountIn(Credentials): role: Literal["admin","faculty","student"]="student"
-class CourseIn(BaseModel): title: str=Field(min_length=2,max_length=160); code: str=Field(min_length=2,max_length=40); description: str=""; faculty_id: int|None=None
-class AssessmentIn(BaseModel): course_id:int; title:str=Field(min_length=2,max_length=160); description:str=""; starts_at:datetime|None=None; ends_at:datetime|None=None; question_ids:list[int]=[]
+
 
 @app.post("/api/admin/users",status_code=201)
 def admin_create_user(body:AccountIn,u:User=Depends(current),s:Session=Depends(db)):
